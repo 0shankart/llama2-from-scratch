@@ -1,0 +1,299 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": []
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": 4,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "etFleKVCpctn",
+        "outputId": "724e26f3-d168-433d-91ce-023c5c6ed04d"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Mounted at /content/drive\n"
+          ]
+        }
+      ],
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "cd /content/drive/MyDrive/files"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "D2LtWJh9lNNL",
+        "outputId": "508c4bf3-3c75-4c6c-8610-90708acc8867"
+      },
+      "execution_count": 5,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "/content/drive/MyDrive/files\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "ls"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "RhgZ1In9lQLK",
+        "outputId": "0e8a958e-865c-41bc-a342-ffd98fc25830"
+      },
+      "execution_count": 8,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "clean_weather.csv        imdb_data.csv  iris.csv                    Used_Car_Dataset.csv\n",
+            "english_telugu_data.txt  input.txt      Katze_wikipedia_images.jpg  yelp.csv\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "its called causal model, where the current output depends on the previous output, the model tries to complete this prompt in the most coherent way<br>\n",
+        "we keep asking model for successfull token based on the previous tokens <br>"
+      ],
+      "metadata": {
+        "id": "zE-udmU8wl1B"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "import torch.nn as nn\n",
+        "import torch.nn.functional as F\n",
+        "import math\n",
+        "from dataclasses import dataclass\n",
+        "from typing import Optional"
+      ],
+      "metadata": {
+        "id": "F_q3WZTFlfvV"
+      },
+      "execution_count": 3,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "@dataclass\n",
+        "class ModelArgs:\n",
+        "    dim: int = 4096\n",
+        "    n_layers: int = 32\n",
+        "    n_heads: int = 32 # Number of heads for the queries\n",
+        "    n_kv_heads: Optional[int] = None # Number of heads for the K and V\n",
+        "    vocab_size: int = -1 # This will be set when we load the tokenizer\n",
+        "    mulitple_of: int = 256\n",
+        "    ffn_dim_multiplier: Optional[float] = None\n",
+        "    norm_eps: float = 1e-5\n",
+        "\n",
+        "    # Neeeded for KV cache\n",
+        "    max_batch_size: int = 32\n",
+        "    max_seq_len: int = 2048\n",
+        "\n",
+        "    device: str = None\n"
+      ],
+      "metadata": {
+        "id": "NQDegV7yyZlE"
+      },
+      "execution_count": 7,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device: str, theta: float = 10000.0):\n",
+        "    # As written in the paper, the dimension of the embedding must be even\n",
+        "    assert head_dim % 2 == 0, \"Dimension must be divisible by 2\"\n",
+        "    # Build the theta parameters\n",
+        "    # According to the formula theta_i = 10000 ^ (-2(i-1)/dim) for i - [1, 2, ... dim / 2]\n",
+        "    # Shape: (Head_Dim / 2)\n",
+        "    theta_numerator = torch.arange(0, head_dim, 2).float()\n",
+        "    # Shape: (Head_Dim / 2)\n",
+        "    theta = 1.0 / (theta ** (theta_numerator / head_dim)).to(device)\n",
+        "    # Construct the positions (the \"m\" parameters)\n",
+        "    # Shape: (Seq_Len)\n",
+        "    m = torch.arange(seq_len, device=device)\n",
+        "    # Multiply each theta by each position using the outer product\n",
+        "    # Shape: (Seq_len) outer_product* (Head_Dim / 2) -> (Seq_Len, Head_Dim / 2)\n",
+        "    freqs = torch.outer(m, theta).float()\n",
+        "    # We can compute comlpex numbers in the polar form c = R * exp(i * m * theta), where R = 1 as follows:\n",
+        "    # (Seq_Len, Head_Dim / 2) -> (Seq_Len, Head_Dim / 2)"
+      ],
+      "metadata": {
+        "id": "HuFmtQTl8Ebk"
+      },
+      "execution_count": 1,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device: str):\n",
+        "\n",
+        "    # (B, Seq_Len, H, Head_Dim) -> (B, Seq_Len, H, Head_Dim / 2)\n",
+        "    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))\n",
+        "    # (Seq_Len, Head_Dim / 2) -> (1, Seq_Len, 1, Head_Dim / 2)\n",
+        "    freqs_comlex = freqs_complex.unsqueeze(0).unsqueeze(2)\n",
+        "    # (B, Seq_Len, H, Head_Dim / 2) * (1, Seq_Len, 1, Head_Dim / 2) = (B, Seq_Len, H, Head_Dim / 2)\n",
+        "    x_rotated = x_complex * freqs_complex\n",
+        "    # (B, Seq_Len, H, Head_Dim / 2) -> (B, Seq_Len, H, Head_Dim / 2, 2)\n",
+        "    x_out = torch.view_as_real(x_rotated)\n",
+        "    # (B, Seq_Len, H, Head_Dim / 2, 2) -> (B, Seq_Len, H, Head_Dim)\n",
+        "    x_out = x_out.reshape(*x.shape)\n",
+        "\n",
+        "    return x_out.type_as(x).to(device)"
+      ],
+      "metadata": {
+        "id": "zOn3UuVrO75y"
+      },
+      "execution_count": 5,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class RMSNorm(nn.Module):\n",
+        "\n",
+        "    def __init__(self, dim: int, eps: float = 1e-6):\n",
+        "        super().__init__()\n",
+        "        self.eps = eps\n",
+        "        # The gamma parameter\n",
+        "        self.weight = nn.Parameter(torch.ones(dim))\n",
+        "\n",
+        "    def _norm(self, x: torch.Tensor):\n",
+        "        # (B, Seq_Len, Dim) * (B, Seq_Len, 1) = (B, Seq_Len, Dim)\n",
+        "        # rsqrt: 1 / sqrt(x)\n",
+        "        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)\n",
+        "\n",
+        "    def forward(self, x: torch.Tensor):\n",
+        "        # (Dim) * (B, Seq_Len, Dim) = (B, Seq_Len, Dim)\n",
+        "        return self.weight * self._norm(x.float()).type_as(x)\n"
+      ],
+      "metadata": {
+        "id": "162SgXCxZrjI"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class EncoderBloack(nn.Module):\n",
+        "\n",
+        "    def __init__(self, args: ModelArgs) :\n",
+        "        super().__init__()\n",
+        "\n",
+        "        self.n_heads = args.n_heads\n",
+        "        self.dim = args.dim\n",
+        "        self.head_dim = args.dim // args.n_heads\n",
+        "\n",
+        "        self.attention = SelfAttention(args)\n",
+        "        self.feed_forward = FeedForward(args)\n",
+        "\n",
+        "        # Normalization BEFORE the self attention\n",
+        "        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)\n",
+        "        # Normazliation BEFORE the feed forward block\n",
+        "        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)\n",
+        "\n",
+        "    def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):\n",
+        "        # (B, Seq_Len, Dim) + (B, Seq_Len, Dim) --> (B, Seq_Len, Dim)\n",
+        "        h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_complex)\n",
+        "        out = h + self.feed_forward.forward(self.ffn_norm(h))\n",
+        "        return out"
+      ],
+      "metadata": {
+        "id": "3GDx5bF9hCFE"
+      },
+      "execution_count": 8,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class Transformer(nn.Module):\n",
+        "\n",
+        "    def __init__(self, args: ModelArgs) -> None:\n",
+        "        super().__init__()\n",
+        "\n",
+        "        assert args.vocab_size != -1, \"Vocab sizer must be set\"\n",
+        "\n",
+        "        self.args = args\n",
+        "        self.vocab_size = args.vocab_size\n",
+        "        self.n_layers = args.n_layers\n",
+        "        self.tok_embeddings = nn.Embedding(self.vocab_size, args.dim)\n",
+        "\n",
+        "        self.layers = nn.ModuleList()\n",
+        "        for _ in range(args.n_layers):\n",
+        "            self.layers.append(EncoderBlock(args))\n",
+        "\n",
+        "        self.norm = RMSNorm(args.dim, eps=args.norm_eps)\n",
+        "        self.output = nn.Linear(args.dim, self.vocab_size, bias=False)\n",
+        "\n",
+        "        self.freqs_comlpex = precompute_theta_pos_frequencies(self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, device=self.args.device)\n",
+        "\n",
+        "\n",
+        "    def forward(self, tokens: torch.Tensor, start_pos: int):\n",
+        "        # (B, Seq_Len)\n",
+        "        batch_size, seq_len = tokens.shape\n",
+        "        assert seq_len == 1, \"Only one token at a time can be processed\"\n",
+        "\n",
+        "        # (B, Seq_Len) -> (B, Seq_Len, Dim)\n",
+        "        h = self.tok_embeddings(tokens)\n",
+        "\n",
+        "        # Retrieve the paris (m, theta) corresponding to the positions [start_pos, start_pos + seq_len]\n",
+        "        freqs_complex = self.freqs_complex[start_pos:start_pos + seq_len]\n",
+        "\n",
+        "        # Consecutively apply all the encoder layers\n",
+        "        for layer in self.layers:\n",
+        "            h = layer(h, start_pos, freqs_complex)\n",
+        "        h = self.norm(h)\n",
+        "        output = self.output(h).float()\n",
+        "        return output\n"
+      ],
+      "metadata": {
+        "id": "wAKwcPZGz33Z"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
