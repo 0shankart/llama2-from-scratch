@@ -16,13 +16,13 @@
   "cells": [
     {
       "cell_type": "code",
-      "execution_count": 4,
+      "execution_count": 1,
       "metadata": {
         "colab": {
           "base_uri": "https://localhost:8080/"
         },
         "id": "etFleKVCpctn",
-        "outputId": "724e26f3-d168-433d-91ce-023c5c6ed04d"
+        "outputId": "db2782b6-25b1-41db-c968-e50ad861f07e"
       },
       "outputs": [
         {
@@ -48,9 +48,9 @@
           "base_uri": "https://localhost:8080/"
         },
         "id": "D2LtWJh9lNNL",
-        "outputId": "508c4bf3-3c75-4c6c-8610-90708acc8867"
+        "outputId": "31b7364a-59b1-4765-ec8d-51d9d5e7d7e9"
       },
-      "execution_count": 5,
+      "execution_count": 2,
       "outputs": [
         {
           "output_type": "stream",
@@ -71,9 +71,9 @@
           "base_uri": "https://localhost:8080/"
         },
         "id": "RhgZ1In9lQLK",
-        "outputId": "0e8a958e-865c-41bc-a342-ffd98fc25830"
+        "outputId": "2e13efa0-0095-4a32-ec6c-b9847b02f2db"
       },
-      "execution_count": 8,
+      "execution_count": 3,
       "outputs": [
         {
           "output_type": "stream",
@@ -108,7 +108,7 @@
       "metadata": {
         "id": "F_q3WZTFlfvV"
       },
-      "execution_count": 3,
+      "execution_count": 4,
       "outputs": []
     },
     {
@@ -134,7 +134,7 @@
       "metadata": {
         "id": "NQDegV7yyZlE"
       },
-      "execution_count": 7,
+      "execution_count": 5,
       "outputs": []
     },
     {
@@ -161,7 +161,7 @@
       "metadata": {
         "id": "HuFmtQTl8Ebk"
       },
-      "execution_count": 1,
+      "execution_count": 6,
       "outputs": []
     },
     {
@@ -185,7 +185,39 @@
       "metadata": {
         "id": "zOn3UuVrO75y"
       },
-      "execution_count": 5,
+      "execution_count": 7,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class SelfAttention(nn.Module):\n",
+        "    def __init__(self, args: ModelArgs):\n",
+        "        super().__init__()\n",
+        "\n",
+        "        # Indicates the number of heads for the Key and Values\n",
+        "        self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads\n",
+        "        # Indicates the number of heads for the Queries\n",
+        "        self.n_heads_q = args.n_heads\n",
+        "        # Indicates how many times the heads of Keys and Values should be repeated to match the head of the Queries\n",
+        "        self.n_rep = self.n_heads_q // self.n_kv_heads\n",
+        "        # Indicates the dimension of the each head\n",
+        "        self.head_dim = args.dim // args.n_heads\n",
+        "\n",
+        "        self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)\n",
+        "        self.wk = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)\n",
+        "        self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)\n",
+        "        self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)\n",
+        "\n",
+        "        self.cache_k = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))\n",
+        "        self.cache_v = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))\n",
+        "\n",
+        "    def forward()"
+      ],
+      "metadata": {
+        "id": "X2XvRrC9tjVQ"
+      },
+      "execution_count": null,
       "outputs": []
     },
     {
@@ -211,13 +243,13 @@
       "metadata": {
         "id": "162SgXCxZrjI"
       },
-      "execution_count": null,
+      "execution_count": 8,
       "outputs": []
     },
     {
       "cell_type": "code",
       "source": [
-        "class EncoderBloack(nn.Module):\n",
+        "class EncoderBlock(nn.Module):\n",
         "\n",
         "    def __init__(self, args: ModelArgs) :\n",
         "        super().__init__()\n",
@@ -243,7 +275,7 @@
       "metadata": {
         "id": "3GDx5bF9hCFE"
       },
-      "execution_count": 8,
+      "execution_count": 11,
       "outputs": []
     },
     {
@@ -292,7 +324,7 @@
       "metadata": {
         "id": "wAKwcPZGz33Z"
       },
-      "execution_count": null,
+      "execution_count": 10,
       "outputs": []
     }
   ]
